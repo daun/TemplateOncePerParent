@@ -1,0 +1,94 @@
+<?php
+
+class TemplateOncePerParent extends WireData implements Module {
+
+	public static function getModuleInfo() {
+		return array(
+			'title' => __('Template Once Per Parent', __FILE__),
+			'summary' => __('Enable templates to be used once per parent page', __FILE__),
+			'version' => "0.1.0",
+			'icon' => 'cubes', 
+			'autoload'	=>	true
+		);
+	}
+	
+	public function init() {
+		$this->addHookAfter("ProcessPageAdd::getAllowedTemplates", $this, "filterAllowedTemplates");
+		$this->addHookAfter("ProcessTemplate::buildEditForm", $this, "afterBuildEditForm");
+		$this->addHookBefore("ProcessTemplate::executeSave", $this, "beforeSave");
+	}
+	
+	public function filterAllowedTemplates(HookEvent $event) {
+		$process = $event->object;
+		$templates = $event->return;
+		$parent = $event->arguments(0);
+
+		if(! $parent) {
+			if(isset($_POST['parent_id'])) {
+				$parent_id = (int) $_POST['parent_id']; 
+			} else {
+				$parent_id = isset($_GET['parent_id']) ? (int) $_GET['parent_id'] : 0; 
+			}
+			$parent = $this->pages->get($parent_id);
+		}
+		
+		if($parent == null || $parent instanceof NullPage) return;
+		
+		foreach(array_keys($templates) as $k) {
+			$template = $templates[$k];
+			if($template->oncePerParent && $parent->children("template={$template}")->count() > 0) {
+				unset($templates[$k]);
+			}
+		}
+		
+		$event->return = $templates;
+	}
+	
+
+	public function afterBuildEditForm(HookEvent $event) {
+
+		$process = $event->object;
+		$template = $event->arguments(0);
+		$form = $event->return;
+
+		$f = $this->createFormField($template);
+		
+		$noParents = $form->getChildByName("noParents");
+		$noParents->parent->insertAfter($f, $noParents);
+		
+		$event->return = $form;
+	}
+
+
+	public function beforeSave(HookEvent $event) {
+		
+		if(isset($_POST['id'])) {
+			$id = (int) $_POST['id']; 
+		} else {
+			$id = isset($_GET['id']) ? (int) $_GET['id'] : 0; 
+		}
+
+		$template = $this->templates->get($id); 
+
+		if(! $template) return;
+		
+		$f = $this->createFormField($template);
+		
+		$f->processInput($this->input->post);
+		
+		$template->set("oncePerParent", $f->value == 1);
+	}
+
+	private function createFormField($template) {
+		
+		$f = $this->modules->get("InputfieldCheckbox");
+		$f->attr('name', "oncePerParent");
+		$f->label = $this->_("Only once per parent");
+		$f->description = $this->_("Allow only one page with this template under each parent");
+		$f->checkedValue = 1;
+		if($template->oncePerParent == 1) $f->attr('checked', 'checked');
+		
+		return $f;
+	}
+
+}
